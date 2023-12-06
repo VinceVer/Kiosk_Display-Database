@@ -12,9 +12,14 @@ const yaml = require('js-yaml');
 const {htmlToText} = require('html-to-text');
 const {simpleParser} = require('mailparser');
 
+fsp.access('./bin/main_database.db', fs.constants.F_OK, error => {
+    if (error) {
+        fs.writeFileSync('./bin/main_database.db');
+    }
+})
 const Database = new sqlite3.Database('./bin/main-database.db');
-Database.run('CREATE TABLE IF NOT EXISTS devicetimeline (time TEXT, type TEXT, device_name TEXT, kiosk_name TEXT, conn_status INTEGER, comm_status INTEGER, coupons_printed INTEGER, execution_status TEXT, fault_status INTEGER, paper_jams INTEGER, mediabin1_status INTEGER, last_seen TEXT, last_update TEXT, service_connection INTEGER, target_status TEXT, status_message TEXT, urgency_level INTEGER)');
-Database.run('CREATE TABLE IF NOT EXISTS apptimeline (time TEXT, type TEXT, kiosk_name TEXT, app_status INTEGER, last_seen TEXT, status_message TEXT, urgency_level INTEGER)');
+Database.run('CREATE TABLE IF NOT EXISTS devicetimeline (time INTEGER, type TEXT, device_name TEXT, kiosk_name TEXT, conn_status INTEGER, comm_status INTEGER, coupons_printed INTEGER, execution_status TEXT, fault_status INTEGER, paper_jams INTEGER, mediabin1_status INTEGER, last_seen TEXT, last_update TEXT, service_connection INTEGER, tags_printed INTEGER, target_status TEXT, status_message TEXT, from_urgency_level INTEGER, to_urgency_level INTEGER)');
+Database.run('CREATE TABLE IF NOT EXISTS apptimeline (time INTEGER, type TEXT, kiosk_name TEXT, app_status INTEGER, last_seen TEXT, status_message TEXT, from_urgency_level INTEGER, to_urgency_level INTEGER)');
 
 const config = JSON.parse(fs.readFileSync('../.website/storage/config.json'));
 const status_database = JSON.parse(fs.readFileSync('./bin/status_database.json'));
@@ -170,11 +175,11 @@ const processEmail = async (parsed) => {
         ]
     });
 
-    if (parsed.subject.toLowerCase().includes('kiosks')) {
+    if (parsed.subject.toLowerCase().includes('kiosk')) {
         await analyseData_DEVICES_v2(emailData);
     }
 
-    if (parsed.subject.toLowerCase().includes('apps')) {
+    if (parsed.subject.toLowerCase().includes('app')) {
         await analyseData_APPS(emailData);
     }
 };
@@ -709,62 +714,6 @@ const verifyDatabase_QUEUE = () => {
 
 /* Data Analyser. */
 let dataRow, deviceName, deviceObject, kioskName, kioskObject, kioskUrgency, newUrgency, oldUrgency, statusData;
-const analyseData_DEVICES = async (data) => {
-    const emailInfo = data.split("\n\n\n|\n")[0],
-          dataTypes = data.split("\n\n\n|\n")[1].split("\n|\n")[0].split("\n"),
-          dataArray = data.split("\n\n\n|\n")[1].split("\n|\n").slice(1),
-          indices = {};
-
-    //console.log(emailInfo.split("Time:\n")[1]);
-
-    /* Loop through declarations. */
-    for (let key in table_naming) {
-        indices[key] = dataTypes.findIndex(item => item.toLowerCase().replaceAll(" ","_").includes(table_naming[key].toLowerCase().replaceAll(" ","_")));
-    }
-    /* -------------------------- */
-
-
-
-    /* Loop through the data rows. */
-    for (let dataRowIndex in dataArray) {
-        dataRow = dataArray[dataRowIndex].replaceAll("\n","").split("/").slice(1);
-        dataRow = dataRow.map(item => item = isNaN(Number(item)) ? item : Number(item));
-
-        try {
-            // Names:
-            kioskName = dataRow[indices.kiosk_name];
-            deviceName = dataRow[indices.device_name].replace("."+kioskName,"");
-
-            // Objects in database:
-            kioskObject = status_database[kioskName] || newKiosk(kioskName);
-            deviceObject = kioskObject.devices[deviceName] || newItem(kioskName, "devices", deviceName);
-
-            // Set all properties:
-            for (let key in indices) {
-                deviceObject[key] = isNaN(dataRow[indices[key]]) ? dataRow[indices[key]] : Number(dataRow[indices[key]]);
-            }
-
-            // Set special properties:
-            deviceObject.last_seen = createDateTimestamp(dataRow[indices.last_seen]) || createDateTimestamp(dataRow[indices.last_execution]);
-
-            newUrgency = getUrgencyLevel(dataRow, deviceName.split(/[0-9.]/)[0], indices);
-            if (newUrgency !== deviceObject.urgency_level) {deviceObject.last_update = deviceObject.last_seen};
-            deviceObject.urgency_level = getUrgencyLevel(dataRow, deviceName.split(/[0-9.]/)[0], indices);
-
-            statusData = getStatusData(dataRow, deviceObject.urgency_level, indices);
-            deviceObject.status_message = statusData.message;
-            deviceObject.status_indicator = statusData.icon;
-
-            kioskUrgency = getKioskUrgencyData(kioskObject);
-            kioskObject.location = findLocation(kioskName) || ".undefined";
-            kioskObject.urgency_level = kioskUrgency.urgency_level;
-            kioskObject.urgency_icon = kioskUrgency.icon;
-            kioskObject.note = kioskUrgency.note;
-        } catch (error) {}
-    }
-    /* --------------------------- */
-}
-
 const analyseData_DEVICES_v2 = async (data) => {
     const emailInfo = data.split("\n\n\n|\n")[0],
           dataTypes = data.split("\n\n\n|\n")[1].split("\n|\n")[0].split("\n"),
@@ -824,7 +773,7 @@ const analyseData_DEVICES_v2 = async (data) => {
                         oldUrgency = deviceObject.urgency_level;
 
                         const lastSeenTimestamp = createDateTimestamp(dataRow[indices.last_seen]) || createDateTimestamp(dataRow[indices.last_execution]);
-                        if (!deviceObject.last_seen || deviceObject.last_seen < lastSeenTimestamp) {
+                        if (!deviceObject.last_seen || deviceObject.last_seen < lastSeenTimestamp || deviceObject.last_seen.includes("undefined")) {
                             // Set all properties:
                             for (let key in indices) {
                                 deviceObject[key] = isNaN(dataRow[indices[key]]) ? dataRow[indices[key]] : Number(dataRow[indices[key]]);
@@ -907,7 +856,7 @@ const analyseData_APPS = async (data) => {
                         appObject = kioskObject.applications[appCode] || newItem(kioskName, "applications", appCode);
                         statusObject = config.status_messages.app.codes[appStatus];
 
-                        if (!appObject.last_seen || appObject.last_seen < lastSeen) {
+                        if (!appObject.last_seen || appObject.last_seen < lastSeen || appObject.last_seen.includes("undefined")) {
                             // Set special properties:
                             appObject.display_name = config.applications[appCode] === "undefined" ? undefined : config.applications[appCode];
                             appObject.app_status = Number(appStatus);

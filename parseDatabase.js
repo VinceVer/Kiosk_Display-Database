@@ -10,7 +10,7 @@ const outputFilePath = './output.txt';
 const outputFileStream = fs.createWriteStream(outputFilePath, { flags: 'w' });
 
 
-Database.run('CREATE TABLE IF NOT EXISTS devicetimeline (time INTEGER, type TEXT, device_name TEXT, kiosk_name TEXT, conn_status INTEGER, comm_status INTEGER, coupons_printed INTEGER, execution_status TEXT, fault_status INTEGER, paper_jams INTEGER, mediabin1_status INTEGER, last_seen TEXT, last_update TEXT, service_connection INTEGER, target_status TEXT, status_message TEXT, from_urgency_level INTEGER, to_urgency_level INTEGER)');
+Database.run('CREATE TABLE IF NOT EXISTS devicetimeline (time INTEGER, type TEXT, device_name TEXT, kiosk_name TEXT, conn_status INTEGER, comm_status INTEGER, coupons_printed INTEGER, execution_status TEXT, fault_status INTEGER, paper_jams INTEGER, mediabin1_status INTEGER, last_seen TEXT, last_update TEXT, service_connection INTEGER, tags_printed INTEGER, target_status TEXT, status_message TEXT, from_urgency_level INTEGER, to_urgency_level INTEGER)');
 Database.run('CREATE TABLE IF NOT EXISTS apptimeline (time INTEGER, type TEXT, kiosk_name TEXT, app_status INTEGER, last_seen TEXT, status_message TEXT, from_urgency_level INTEGER, to_urgency_level INTEGER)');
 
 
