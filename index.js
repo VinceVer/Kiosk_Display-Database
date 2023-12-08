@@ -12,17 +12,19 @@ const yaml = require('js-yaml');
 const {htmlToText} = require('html-to-text');
 const {simpleParser} = require('mailparser');
 
-fsp.access('./bin/main_database.db', fs.constants.F_OK, error => {
+fsp.access('./bin/main-database.db', fs.constants.F_OK, error => {
     if (error) {
-        fs.writeFileSync('./bin/main_database.db');
+        fs.writeFileSync('./bin/main-database.db', "");
     }
 })
 const Database = new sqlite3.Database('./bin/main-database.db');
 Database.run('CREATE TABLE IF NOT EXISTS devicetimeline (time INTEGER, type TEXT, device_name TEXT, kiosk_name TEXT, conn_status INTEGER, comm_status INTEGER, coupons_printed INTEGER, execution_status TEXT, fault_status INTEGER, paper_jams INTEGER, mediabin1_status INTEGER, last_seen TEXT, last_update TEXT, service_connection INTEGER, tags_printed INTEGER, target_status TEXT, status_message TEXT, from_urgency_level INTEGER, to_urgency_level INTEGER)');
 Database.run('CREATE TABLE IF NOT EXISTS apptimeline (time INTEGER, type TEXT, kiosk_name TEXT, app_status INTEGER, last_seen TEXT, status_message TEXT, from_urgency_level INTEGER, to_urgency_level INTEGER)');
+Database.run('CREATE TABLE IF NOT EXISTS kiosktimeline (time INTEGER, kiosk_name TEXT, from_urgency_level INTEGER, to_urgency_level INTEGER)');
 
 const config = JSON.parse(fs.readFileSync('../.website/storage/config.json'));
 const status_database = JSON.parse(fs.readFileSync('./bin/status_database.json'));
+//const old_database = status_database;
 
 const status_messages = config.status_messages;
 const table_naming = config.table_naming;
@@ -196,6 +198,7 @@ const updateData = async () => {
     console.log('Done fetching all messages!');
 
     await verifyDatabase();
+
     //fs.writeFileSync('./bin/status_database.json', JSON.stringify(status_database, null, '\t'));
     try {
         await fsp.writeFile('./tmp/status_database.json', JSON.stringify(status_database, null, '\t'));
@@ -276,6 +279,7 @@ const calculateScore = (groupName) => {
                     counter += 0.75;
                     break;
                 case 0:
+                case null:
                     maxCounter--;
                     break;
                 case -1:
@@ -323,6 +327,9 @@ const createDateTimestamp = (date) => {
 }
 
 const getKioskUrgencyData = (kioskObject) => {
+    const currentTime = kioskObject.last_seen ? new Date(kioskObject.last_seen) : new Date();
+    const unixTimestamp = Math.floor(currentTime.getTime() / 1000);
+
     let appUrgencyLevel = -1, deviceUrgencyLevel = -1, objectUrgencyLevel;
     let appCounter = 0, deviceCounter = 0;
     let outputNote;
@@ -353,6 +360,8 @@ const getKioskUrgencyData = (kioskObject) => {
     if (appUrgencyLevel > -1 && deviceUrgencyLevel > -1 && urgency_icons[`${deviceUrgencyLevel}${appUrgencyLevel}`]) {
         const outputLevel = `${deviceUrgencyLevel}${appUrgencyLevel}`;
 
+        if (Number(outputLevel) !== kioskObject.urgency_level && kioskObject.last_seen) {updateKioskTimeline(unixTimestamp, kioskObject.id, kioskObject.urgency_level, outputLevel);}
+
         return {
             urgency_level: Number(outputLevel),
             icon: urgency_icons[outputLevel],
@@ -360,6 +369,8 @@ const getKioskUrgencyData = (kioskObject) => {
         };
     } else {
         const outputLevel = deviceUrgencyLevel !== -1 ? deviceUrgencyLevel : appUrgencyLevel;
+
+        if (outputLevel !== kioskObject.urgency_level && kioskObject.last_seen) {updateKioskTimeline(unixTimestamp, kioskObject.id, kioskObject.urgency_level, outputLevel);}
 
         return {
             urgency_level: outputLevel,
@@ -519,6 +530,31 @@ const newKiosk = (kioskName) => {
     return status_database[kioskName];
 }
 
+const updateKioskTimeline = (time, kioskName, old_urgency, new_urgency) => {
+    const insertData = [
+        time,
+        kioskName,
+        old_urgency,
+        new_urgency
+    ]
+    Database.get('SELECT * FROM kiosktimeline WHERE time = ? AND kiosk_name = ?', [time, kioskName], (err, existingRow) => {
+        if (existingRow) {
+            insertData.push(time, kioskName);
+            Database.run('UPDATE kiosktimeline SET time = ?, kiosk_name = ?, from_urgency_level = ?, to_urgency_level = ? WHERE time = ? AND kiosk_name = ?', insertData, (err) => {
+                if (err) {
+                    handleError("Database UPDATE", {Error_inserting_new_row: err.message})
+                }
+            });
+        } else {
+            Database.run('INSERT INTO kiosktimeline (time, kiosk_name, from_urgency_level, to_urgency_level) VALUES (?, ?, ?, ?)', insertData, function(err) {
+                if (err) {
+                    handleError("Database INSERT", {Error_inserting_new_row: err.message})
+                }
+            });
+        }
+    });
+}
+
 const updateTimeline = (deviceObject, old_urgency) => {
     const currentTime = new Date(deviceObject.last_seen);
     const unixTimestamp = Math.floor(currentTime.getTime() / 1000);
@@ -627,15 +663,17 @@ const verifyDatabase_QUEUE = () => {
                 switch(queue[targetName]) {
                     case "ONLINE":
                         for (let deviceName in kiosk.devices) {
-                            with (kiosk.devices[deviceName]) {
-                                urgency_level = -1;
-                                status_indicator = status_2.icon;
-                                status_message = status_2.messages[Math.floor(Math.random() * status_2.messages.length)]+" [Manually Set]";
+                            if (kiosk.devices[deviceName].urgency_level !== -1) {
+                                with (kiosk.devices[deviceName]) {
+                                    urgency_level = -1;
+                                    status_indicator = status_2.icon;
+                                    status_message = status_2.messages[Math.floor(Math.random() * status_2.messages.length)]+" [Manually Set]";
+                                }
                             }
                         }
-                        const urgency_data = getKioskUrgencyData(kiosk)
-                        kiosk.urgency_level = urgency_data.urgency_level;
-                        kiosk.icon = urgency_data.icon;
+                        // const urgency_data = getKioskUrgencyData(kiosk)
+                        // kiosk.urgency_level = urgency_data.urgency_level;
+                        // kiosk.icon = urgency_data.icon;
                         kiosk.note = "";
                         break;
                     case "DELETE":
@@ -651,6 +689,7 @@ const verifyDatabase_QUEUE = () => {
                     switch(queue[targetName]) {
                         case "ONLINE":
                             with (kiosk.devices[deviceName]) {
+                                last_seen = (new Date()).toISOString().slice(0, 19);
                                 urgency_level = -1;
                                 status_indicator = status_2.icon;
                                 status_message = status_2.messages[Math.floor(Math.random() * status_2.messages.length)]+" [Manually Set]";
@@ -666,9 +705,9 @@ const verifyDatabase_QUEUE = () => {
                             delete kiosk.devices[deviceName];
                             break;
                     }
-                    const urgency_data = getKioskUrgencyData(kiosk)
-                    kiosk.urgency_level = urgency_data.urgency_level;
-                    kiosk.icon = urgency_data.icon;
+                    // const urgency_data = getKioskUrgencyData(kiosk)
+                    // kiosk.urgency_level = urgency_data.urgency_level;
+                    // kiosk.icon = urgency_data.icon;
                     success = true;
                     break;
                 }
@@ -697,9 +736,9 @@ const verifyDatabase_QUEUE = () => {
                             delete kiosk.applications[appName];
                             break;
                     }
-                    const urgency_data = getKioskUrgencyData(kiosk)
-                    kiosk.urgency_level = urgency_data.urgency_level;
-                    kiosk.icon = urgency_data.icon;
+                    // const urgency_data = getKioskUrgencyData(kiosk)
+                    // kiosk.urgency_level = urgency_data.urgency_level;
+                    // kiosk.icon = urgency_data.icon;
                     break;
                 }
             }
@@ -780,6 +819,9 @@ const analyseData_DEVICES_v2 = async (data) => {
                             }
 
                             // Set special properties:
+                            if (!kioskObject.last_seen || kioskObject.last_seen < lastSeenTimestamp || kioskObject.last_seen.includes("undefined")) {
+                                kioskObject.last_seen = lastSeenTimestamp;
+                            }
                             deviceObject.last_seen = lastSeenTimestamp;
 
                             newUrgency = getUrgencyLevel(dataRow, deviceName.split(/[0-9.]/)[0], indices);
@@ -793,15 +835,15 @@ const analyseData_DEVICES_v2 = async (data) => {
                             deviceObject.status_message = config.ignored_apps.includes(deviceName.split(/[0-9.]/)) ? "[Status Ignored]" : statusData.message;
                             deviceObject.status_indicator = statusData.icon;
 
-                            kioskUrgency = getKioskUrgencyData(kioskObject);
+                            // kioskUrgency = getKioskUrgencyData(kioskObject);
                             
                             const locationData = findLocation(kioskName);
                             kioskObject.group = locationData.group || ".undefined";
                             kioskObject.location = locationData.location || ".undefined";
 
-                            kioskObject.urgency_level = kioskUrgency.urgency_level;
-                            kioskObject.urgency_icon = kioskUrgency.icon;
-                            kioskObject.note = kioskUrgency.note;
+                            // kioskObject.urgency_level = kioskUrgency.urgency_level;
+                            // kioskObject.urgency_icon = kioskUrgency.icon;
+                            // kioskObject.note = kioskUrgency.note;
 
                             updateTimeline(deviceObject, oldUrgency);
                         }
@@ -875,15 +917,15 @@ const analyseData_APPS = async (data) => {
                 }
 
                 // Set special properties:
-                kioskUrgency = getKioskUrgencyData(kioskObject);
+                // kioskUrgency = getKioskUrgencyData(kioskObject);
 
                 const locationData = findLocation(kioskName)
                 kioskObject.group = locationData.group || ".undefined";
                 kioskObject.location = locationData.location || ".undefined";
 
-                kioskObject.urgency_level = kioskUrgency.urgency_level;
-                kioskObject.urgency_icon = kioskUrgency.icon;
-                kioskObject.note = kioskUrgency.note;
+                // kioskObject.urgency_level = kioskUrgency.urgency_level;
+                // kioskObject.urgency_icon = kioskUrgency.icon;
+                // kioskObject.note = kioskUrgency.note;
                 kioskObject.oldest_report = getOldestReport(kioskObject);
             } catch (error) {
                 handleError(deviceName, {Time: new Date(), Error: error, Table_Row: dataRow, Email_Data: data})
