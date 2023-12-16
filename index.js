@@ -61,6 +61,12 @@ let HandlerOpen = true;
 
 
 
+if (!fs.existsSync(__dirname+"/tmp")) {
+    fs.mkdirSync(__dirname+"/tmp", { recursive: true });
+}
+
+
+
 /* Read email form inbox. */
 const getEmails = () => {
     try {
@@ -651,11 +657,13 @@ const verifyDatabase = () => {
 }
 
 const verifyDatabase_QUEUE = () => {
+    console.log("Going through the queue")
     return new Promise((resolve, reject) => {
         const queue = JSON.parse(fs.readFileSync('../.website/storage/queue.json'));
         for (let targetName in queue) {
             let success = false;
             const kiosk = status_database[targetName.split(".")[targetName.split(".").length-1]];
+            console.log("KIOSK", kiosk.id)
             const kioskName = kiosk.id;
 
             // Test for kioskName:
@@ -664,11 +672,15 @@ const verifyDatabase_QUEUE = () => {
                     case "ONLINE":
                         for (let deviceName in kiosk.devices) {
                             if (kiosk.devices[deviceName].urgency_level !== -1) {
+                                const oldUrgency = kiosk.devices[deviceName].urgency_level;
                                 with (kiosk.devices[deviceName]) {
+                                    last_seen = (new Date()).toISOString().slice(0, 19);
+                                    last_update = (new Date()).toISOString().slice(0, 19);
                                     urgency_level = -1;
                                     status_indicator = status_2.icon;
                                     status_message = status_2.messages[Math.floor(Math.random() * status_2.messages.length)]+" [Manually Set]";
                                 }
+                                updateTimeline(kiosk.devices[deviceName], oldUrgency);
                             }
                         }
                         // const urgency_data = getKioskUrgencyData(kiosk)
@@ -680,7 +692,7 @@ const verifyDatabase_QUEUE = () => {
                         delete status_database[kioskName];
                         break;
                 }
-                break;
+                continue;
             }
                 
             // Test for deviceName:
@@ -688,12 +700,15 @@ const verifyDatabase_QUEUE = () => {
                 if (deviceName+"."+kioskName === targetName) {
                     switch(queue[targetName]) {
                         case "ONLINE":
+                            const oldUrgency = kiosk.devices[deviceName].urgency_level;
                             with (kiosk.devices[deviceName]) {
                                 last_seen = (new Date()).toISOString().slice(0, 19);
+                                last_update = (new Date()).toISOString().slice(0, 19);
                                 urgency_level = -1;
                                 status_indicator = status_2.icon;
                                 status_message = status_2.messages[Math.floor(Math.random() * status_2.messages.length)]+" [Manually Set]";
                             }
+                            updateTimeline(kiosk.devices[deviceName], oldUrgency);
                             break;
                         case "IGNORE":
                             with (kiosk.devices[deviceName]) {
@@ -712,7 +727,7 @@ const verifyDatabase_QUEUE = () => {
                     break;
                 }
             }
-            if (success) break;
+            if (success) continue;
 
             // Test for appName:
             for (let appName in kiosk.applications) {
@@ -722,6 +737,7 @@ const verifyDatabase_QUEUE = () => {
                             with (kiosk.applications[appName]) {
                                 app_status = 15;
                                 last_seen = (new Date()).toISOString().slice(0, 19);
+                                last_update = (new Date()).toISOString().slice(0, 19);
                                 urgency_level = -1;
                                 status_indicator = status_2.icon;
                                 status_message = status_2.messages[Math.floor(Math.random() * status_2.messages.length)]+" [Manually Set]";
