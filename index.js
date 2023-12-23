@@ -95,11 +95,21 @@ const getEmails = () => {
 
                     const f = imap.fetch(results, {bodies: ''});
 
-                    imap.addFlags(results, ['\\Seen'], function(err) {
+                    imap.addFlags(results, ['\\Deleted'], function(err) {
                         if (!err) {
-                            console.log("Marked as Read");
+                            console.log("Marked as Deleted");
+                    
+                            // Now expunge to permanently delete those emails
+                            imap.expunge(function(errExpunge) {
+                                if (!errExpunge) {
+                                    console.log("Deleted Emails Permanently");
+                                } else {
+                                    console.log(JSON.stringify(errExpunge, null, 2));
+                                }
+                            });
+                    
                         } else {
-                            console.log(json.stringify(err, null, 2));
+                            console.log(JSON.stringify(err, null, 2));
                         }
                     });
 
@@ -192,13 +202,13 @@ const processEmail = async (parsed) => {
     }
 };
 
-const deleteEmail = async (uid) => {
-    const addFlags = util.promisify(imap.addFlags.bind(imap));
-    await addFlags(uid, ['\\Deleted']);
-    const expunge = util.promisify(imap.expunge.bind(imap));
-    await expunge();
-    console.log('Email deleted!');
-};
+// const deleteEmail = async (uid) => {
+//     const addFlags = util.promisify(imap.addFlags.bind(imap));
+//     await addFlags(uid, ['\\Deleted']);
+//     const expunge = util.promisify(imap.expunge.bind(imap));
+//     await expunge();
+//     console.log('Email deleted!');
+// };
 
 const updateData = async () => {
     console.log('Done fetching all messages!');
